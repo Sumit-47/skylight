@@ -8,6 +8,11 @@
   <img src="docs/skylight.png" alt="Skylight projected on a ceiling: aircraft, trails, SFO runways and the night sky" width="100%">
 </p>
 
+<p align="center">
+  <video src="https://github.com/cpaczek/skylight/raw/main/docs/demo.mp4" controls muted loop width="360"></video>
+  <br><em>Skylight on the ceiling, in action.</em>
+</p>
+
 Skylight decodes ADS-B from a cheap RTL-SDR radio and renders the planes physically
 flying over you onto a ceiling-pointed projector. A jet you'd hear overhead glides
 across your ceiling at the same moment — labeled with its airline, type, and where it's
