@@ -52,9 +52,21 @@ for your location and time. Tune everything from your phone.
 |---|---|---|
 | Receiver | **RTL-SDR Blog V4 + dipole** | The included dipole is plenty — planes are nearly overhead. |
 | Compute | **Raspberry Pi 5 (8 GB)** | Decode + render. Active cooling for 24/7. |
-| Projector | Short-throw laser (e.g. Optoma GT2100HDR) | Laser = deep blacks + safe to point up. Any 1080p projector works. |
+| Projector | A 1080p projector pointed up | Laser (e.g. Optoma GT2100HDR) gives the deepest blacks, but it's overkill — see the budget tip below. |
 | Display link | micro-HDMI → HDMI | The Pi 5 uses **micro**-HDMI (not mini). |
 | Mount | Rotating 1/4-20 stand, pointed up | Lower the stand for a bigger image; tape **+ a safety tether**. |
+
+> **💡 Budget tip — you don't need an expensive projector.** The pricey laser short-throw
+> is only worth it if you want the image visible in a **lit** room. If you're happy viewing
+> it in a **dim/dark** room (the intended vibe), a cheap **native-1080p LED** projector like
+> the **[Yaber Buffalo Pro U9](https://www.projectorcentral.com/Yaber-Pro_U9.htm) (~$150)**
+> works great:
+> - **No short-throw needed** — from the floor under an ~8 ft ceiling, even a 1.35:1 throw
+>   gives a ~5.5 ft image.
+> - **Low brightness is fine** (even better) — the content is sparse-on-black, so 200–400
+>   lumens in a dark room actually looks *deeper*.
+> - Just verify it's **native 1920×1080** (not "1080p supported"), has a **quiet fan**, and
+>   an **HDMI input that shows on power-on**.
 
 <p align="center">
   <img src="docs/setup.jpg" alt="The build: short-throw projector pointing up at the ceiling, RTL-SDR dipole antenna on the cabinet" width="320">
