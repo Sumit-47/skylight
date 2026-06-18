@@ -1164,12 +1164,24 @@ if (
   this.isNightAtAirport(cfg)
 ) {
   if (r.leIdent === activeRunway) {
-    this.drawPapiLights(r.le, r.he, cfg, proj);
+    this.drawPapiLights(
+  r.le,
+  r.he,
+  cfg,
+  proj,
+  this.getPapiWhiteCount(r.le, cfg),
+);
     this.drawApproachLights(r.le, r.he, cfg, proj);
   }
 
   if (r.heIdent === activeRunway) {
-    this.drawPapiLights(r.he, r.le, cfg, proj);
+    this.drawPapiLights(
+  r.he,
+  r.le,
+  cfg,
+  proj,
+  this.getPapiWhiteCount(r.he, cfg),
+);
     this.drawApproachLights(r.he, r.le, cfg, proj);
   }
 }
@@ -1224,6 +1236,13 @@ if (
   }
 }
 
+private airportLightScale(cfg: Config): number {
+  if (cfg.radiusMiles > 11) return 0;
+
+  if (cfg.radiusMiles <= 3) return 1.4;
+
+  return 1.4 - ((cfg.radiusMiles - 3) / 8) * 1.05;
+}
 
   private drawRunwayLabel(
   label: string,
@@ -1257,6 +1276,7 @@ private drawPapiLights(
   oppositeEnd: [number, number],
   cfg: Config,
   proj: ProjOpts,
+  whiteCount: number
 ): void {
   const ctx = this.ctx;
 
@@ -1275,10 +1295,13 @@ private drawPapiLights(
   const nx = -uy;
   const ny = ux;
 
-  const along = 18;
-  const side = 18;
-  const spacing = 5;
-  const radius = 2.2;
+  const scale = this.airportLightScale(cfg);
+  if (scale <= 0) return;
+
+const along = 18 * scale;
+const side = 18 * scale;
+const spacing = 5 * scale;
+const radius = 2.2 * scale;
 
   const baseX = a.x + ux * along + nx * side;
   const baseY = a.y + uy * along + ny * side;
@@ -1290,7 +1313,7 @@ private drawPapiLights(
     const x = baseX + nx * i * spacing;
     const y = baseY + ny * i * spacing;
 
-    const isWhite = i >= 2;
+    const isWhite = i < whiteCount;
 
     const color = isWhite
       ? rgba([255, 255, 255], 0.95 * cfg.brightness)
@@ -1307,6 +1330,79 @@ private drawPapiLights(
   ctx.restore();
 }
 
+private getPapiWhiteCount(
+  threshold: [number, number],
+  cfg: Config,
+): number {
+  const thresholdM = llToMeters(
+    threshold[0],
+    threshold[1],
+    cfg.centerLat,
+    cfg.centerLon,
+  );
+
+  let best:
+    | { distanceM: number; angleDeg: number }
+    | null = null;
+
+  for (const tr of this.tracks.values()) {
+    const ac = tr.ac;
+
+    if (ac.onGround) continue;
+    if (ac.lat == null || ac.lon == null) continue;
+
+    const op = this.classifyOperation(ac, cfg);
+
+    if (op !== "arrival") continue;
+
+    const altFt = ac.altGeom ?? ac.altBaro;
+
+    if (altFt == null) continue;
+
+    const acM = llToMeters(
+      ac.lat,
+      ac.lon,
+      cfg.centerLat,
+      cfg.centerLon,
+    );
+
+    const dx = acM.east - thresholdM.east;
+    const dy = acM.north - thresholdM.north;
+
+    const distanceM = Math.hypot(dx, dy);
+
+    if (distanceM < 300 || distanceM > 13000) continue;
+
+    const angleRad = Math.atan2(
+      altFt * 0.3048,
+      distanceM,
+    );
+
+    const angleDeg =
+      angleRad * 180 / Math.PI;
+
+    if (
+      !best ||
+      distanceM < best.distanceM
+    ) {
+      best = {
+        distanceM,
+        angleDeg,
+      };
+    }
+  }
+
+  if (!best) {
+    return 2; // default on-slope display
+  }
+
+  if (best.angleDeg >= 3.5) return 4;
+  if (best.angleDeg >= 3.2) return 3;
+  if (best.angleDeg >= 2.8) return 2;
+  if (best.angleDeg >= 2.5) return 1;
+
+  return 0;
+}
 
 private drawApproachLights(
   threshold: [number, number],
@@ -1350,8 +1446,11 @@ private drawApproachLights(
   ctx.shadowColor = color;
   ctx.shadowBlur = 6;
 
-  const spacing = 14;
-  const radius = 1.8;
+  const scale = this.airportLightScale(cfg);
+  if (scale <= 0) return;
+
+const spacing = 14 * scale;
+const radius = 1.8 * scale;
 
   // Centerline approach lights.
   for (let i = 1; i <= 12; i++) {
@@ -1372,8 +1471,8 @@ private drawApproachLights(
     const cy = a.y + oy * d;
 
     for (let s = -2; s <= 2; s++) {
-      const x = cx + nx * s * 6;
-      const y = cy + ny * s * 6;
+      const x = cx + nx * s * 6 * scale;
+      const y = cy + ny * s * 6 * scale;
 
       ctx.beginPath();
       ctx.arc(x, y, 1.5, 0, Math.PI * 2);
