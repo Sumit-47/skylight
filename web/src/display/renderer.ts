@@ -29,7 +29,7 @@ import { computeSky, type Sky, type Tle } from "./celestial.js";
 import { ASTERISMS } from "./stars.js";
 import type { Airport, AirportGeometry } from "@shared/index.js";
 import type { MetarInfo } from "@shared/index.js";
-
+import tzLookup from "tz-lookup";
 
 /** How far in the past we render, ms. Just over the ~1 Hz fix interval. */
 const RENDER_DELAY_MS = 1150;
@@ -1587,7 +1587,7 @@ if (
       const head = ac.origin ? `${ac.origin} → ${ac.destination}` : `→ ${ac.destination}`;
       out.push({ text: ac.destName ? `${head}   ${ac.destName}` : head, kind: "sub" });
       if (cfg.showRouteDetail && ac.destLat != null && ac.destLon != null) {
-        const bits: string[] = [`${localTimeAt(ac.destLon)} local`];
+        const bits: string[] = [`${localTimeAt(ac.destLat, ac.destLon)} local`];
         if (ac.lat != null && ac.lon != null) {
           const mi = Math.round(greatCircleMiles(ac.lat, ac.lon, ac.destLat, ac.destLon));
           if (mi > 1) bits.push(`${mi.toLocaleString("en-US")} mi to go`);
@@ -1767,13 +1767,39 @@ function greatCircleMiles(lat1: number, lon1: number, lat2: number, lon2: number
 }
 
 /** Longitude-based mean solar time at a place (no DST/tz db) as HH:MM. */
-function localTimeAt(lon: number): string {
+function localTimeAt(
+  lat: number | undefined,
+  lon: number | undefined,
+): string {
+  if (lat != null && lon != null) {
+    try {
+      const timeZone = tzLookup(lat, lon);
+
+      return new Intl.DateTimeFormat("en-GB", {
+        timeZone,
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      }).format(new Date());
+    } catch {
+      // fall through to solar fallback
+    }
+  }
+
+  if (lon == null) return "--:--";
+
   const now = new Date();
-  const utcMin = now.getUTCHours() * 60 + now.getUTCMinutes();
+  const utcMin =
+    now.getUTCHours() * 60 +
+    now.getUTCMinutes();
+
   let m = (utcMin + (lon / 15) * 60) % 1440;
+
   if (m < 0) m += 1440;
+
   const hh = Math.floor(m / 60);
   const mm = Math.floor(m % 60);
+
   return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
 }
 
