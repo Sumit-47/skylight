@@ -40,6 +40,7 @@ export interface Config {
   centerLat: number;
   centerLon: number;
   radiusMiles: number;
+  locationName: string;
 
   // --- calibration (tune against a real overhead pass) ---
   /** Rotate the whole field, degrees. */
@@ -122,7 +123,7 @@ export const DEFAULT_CONFIG: Config = {
   centerLat: 37.6213,
   centerLon: -122.379,
   radiusMiles: 3,
-
+  locationName: "San Francisco International Airport",
   rotationDeg: 0,
   mirrorX: true,
   mirrorY: false,

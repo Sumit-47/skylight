@@ -158,7 +158,34 @@ console.log(
 //  }
 //});
 
- 
+ app.get("/api/location-search", (req, res) => {
+  const q = String(req.query.q ?? "").trim().toUpperCase();
+
+  if (!q) {
+    return res.status(400).json({ error: "Missing query" });
+  }
+
+  const airportsList = [...airports.values()];
+
+  const match =
+    airportsList.find((a) => a.icao === q) ??
+    airportsList.find((a) =>
+      a.name.toUpperCase().includes(q)
+    );
+
+  if (!match) {
+    return res.status(404).json({
+      error: `No location found for ${q}`,
+    });
+  }
+
+  res.json({
+    name: match.name,
+    lat: match.lat,
+    lon: match.lon,
+    icao: match.icao,
+  });
+});
 
 app.get("/api/airport", (_req, res) => {
   try {

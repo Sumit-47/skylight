@@ -30,6 +30,46 @@ const FIELD_LABELS: Record<keyof ShowFields, string> = {
 export function Control() {
   const { state, conn } = useStream("control");
   const cfg = state.config;
+const [locationQuery, setLocationQuery] = useState("");
+  async function applyLocationSearch(query: string) {
+  const value = query.trim();
+
+  if (!value) return;
+
+  const latLonMatch = value.match(
+    /^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/
+  );
+
+  if (latLonMatch) {
+    const lat = Number(latLonMatch[1]);
+    const lon = Number(latLonMatch[2]);
+
+    set({
+      centerLat: lat,
+      centerLon: lon,
+      locationName: `${lat.toFixed(4)}, ${lon.toFixed(4)}`,
+    });
+
+    return;
+  }
+
+  const res = await fetch(
+    `/api/location-search?q=${encodeURIComponent(value)}`
+  );
+
+  if (!res.ok) {
+    console.error("Location search failed", await res.text());
+    return;
+  }
+
+  const loc = await res.json();
+
+  set({
+    centerLat: loc.lat,
+    centerLon: loc.lon,
+    locationName: loc.name,
+  });
+}
 
   // ISS pass finder (for the Sky section).
   const [tles, setTles] = useState<Tle[]>([]);
@@ -93,6 +133,43 @@ export function Control() {
             <Slider value={cfg.radiusMiles} min={0.5} max={75} step={0.5} unit="mi"
               onChange={(v) => set({ radiusMiles: v })} />
           </Row>
+
+<Section title="Location">
+  <Row label="Current">
+    <div>
+      {cfg.locationName}
+      <br />
+      {Math.abs(cfg.centerLat).toFixed(4)}°{" "}
+      {cfg.centerLat >= 0 ? "N" : "S"},{" "}
+      {Math.abs(cfg.centerLon).toFixed(4)}°{" "}
+      {cfg.centerLon >= 0 ? "E" : "W"}
+    </div>
+  </Row>
+
+  <Row label="Search">
+    <input
+      type="text"
+      value={locationQuery}
+      placeholder="City, airport code, or lat,lon"
+      onChange={(e) => setLocationQuery(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          void applyLocationSearch(locationQuery);
+        }
+      }}
+    />
+  </Row>
+
+  <Row label="Apply">
+    <button
+      type="button"
+      onClick={() => void applyLocationSearch(locationQuery)}
+    >
+      Set location
+    </button>
+  </Row>
+</Section>
+
 
           <Row label="Latitude">
   <input
