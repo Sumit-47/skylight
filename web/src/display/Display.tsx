@@ -72,6 +72,14 @@ async function loadMetar(icao: string) {
       const airports = await airportsResponse.json() as Airport[];
       airportsRef.current = airports;
 
+      const primaryAirport = airports[0];
+
+if (primaryAirport) {
+  void loadMetar(primaryAirport.icao);
+} else {
+  metarRef.current = null;
+}
+
       console.log("Airports Loaded:", airports.map((a) => a.icao));
 
       const geometries: AirportGeometry[] = [];

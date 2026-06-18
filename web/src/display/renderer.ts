@@ -308,17 +308,15 @@ constructor(
   ? altRamp(alt)
   : hexToRgb(cfg.palette.glyph);
 
-const vr = tr.ac.baroRate ?? 0;
+const op = this.classifyOperation(tr.ac, cfg);
 
-if (tr.ac.onGround) {
+if (op === "ground") {
   color = [255, 220, 120];
 }
-else if (vr < -300) {
-  // Arrival / descending
+else if (op === "arrival") {
   color = [90, 255, 140];
 }
-else if (vr > 300) {
-  // Departure / climbing
+else if (op === "departure") {
   color = [80, 210, 255];
 }
       const emergency = cfg.highlightEmergency && !!tr.ac.squawk && EMERGENCY_SQUAWKS.has(tr.ac.squawk);
@@ -360,64 +358,95 @@ else if (vr > 300) {
   }
 
 
-  private getLikelyActiveRunwayLabel(): string | null {
+ private getLikelyActiveRunwayLabel(): string | null {
   const metar = this.getMetar();
-  const geometries = this.getGeometries();
-
-  if (!geometries.length) return null;
 
   if (
-    metar?.windDirDeg == null ||
+    metar?.icao == null ||
+    metar.windDirDeg == null ||
     metar.windSpeedKt == null ||
     metar.windSpeedKt < 3
   ) {
     return null;
   }
 
+  const airport = this
+    .getAirports()
+    .find((a) => a.icao === metar.icao);
+
+  if (!airport) return null;
+
   let bestRunway: string | null = null;
   let bestDiff = Infinity;
 
-  for (const geo of geometries) {
-    for (const feature of geo.features) {
-      if (feature.properties?.aeroway !== "runway") continue;
+  for (const runway of airport.runways) {
+    const candidates = [
+      runway.leIdent,
+      runway.heIdent,
+    ];
 
-      const runwayName = String(
-        feature.properties?.ref ??
-        feature.properties?.name ??
-        ""
+    for (const ident of candidates) {
+      const match = ident.match(/^(\d{2})([LCR])?$/);
+      if (!match) continue;
+
+      const number = match[1];
+      const suffix = match[2] ?? "";
+
+      const heading =
+        number === "36"
+          ? 360
+          : Number(number) * 10;
+
+      const diff = Math.abs(
+        ((heading - metar.windDirDeg + 540) % 360) - 180
       );
 
-      const parts = runwayName
-        .split(/[\/\s-]+/)
-        .map((p) => p.trim())
-        .filter(Boolean);
-
-      for (const part of parts) {
-        const match = part.match(/^(\d{2})([LCR])?$/);
-        if (!match) continue;
-
-        const number = match[1];
-        const suffix = match[2] ?? "";
-        const label = number + suffix;
-
-        const heading =
-          number === "36"
-            ? 360
-            : Number(number) * 10;
-
-        const diff = Math.abs(
-          ((heading - metar.windDirDeg + 540) % 360) - 180
-        );
-
-        if (diff < bestDiff) {
-          bestDiff = diff;
-          bestRunway = label;
-        }
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        bestRunway = number + suffix;
       }
     }
   }
 
   return bestDiff <= 35 ? bestRunway : null;
+}
+
+private classifyOperation(
+  ac: Aircraft,
+  cfg: Config,
+): "arrival" | "departure" | "ground" | "unknown" {
+  if (ac.onGround) return "ground";
+
+  if (ac.originLat != null && ac.originLon != null) {
+    const originNear =
+      greatCircleMiles(
+        cfg.centerLat,
+        cfg.centerLon,
+        ac.originLat,
+        ac.originLon,
+      ) < 45;
+
+    if (originNear) return "departure";
+  }
+
+  if (ac.destLat != null && ac.destLon != null) {
+    const destNear =
+      greatCircleMiles(
+        cfg.centerLat,
+        cfg.centerLon,
+        ac.destLat,
+        ac.destLon,
+      ) < 45;
+
+    if (destNear) return "arrival";
+  }
+
+  const vr = ac.baroRate ?? 0;
+
+  if (vr < -300) return "arrival";
+  if (vr > 300) return "departure";
+
+  return "unknown";
 }
 
   private screenHeading(tr: Track, tt: number, proj: ProjOpts): number {
@@ -1456,19 +1485,10 @@ private drawAirport(cfg: Config, proj: ProjOpts): void {
     const kind = classifyGlyph(v.tr.ac);
     let zoomScale = 1;
 
-if (cfg.radiusMiles < 3.5) {
-  const t = Math.max(
-    0,
-    Math.min(1, (cfg.radiusMiles - 1) / 2)
-  );
 
-  zoomScale = 0.55 + t * 0.45;
-}
-else if (cfg.radiusMiles > 10) {
-  zoomScale = Math.min(
-    1,
-    Math.sqrt(10 / cfg.radiusMiles)
-  );
+
+if (cfg.radiusMiles <= 3.5) {
+  zoomScale = 0.6;
 }
 
 const s =
