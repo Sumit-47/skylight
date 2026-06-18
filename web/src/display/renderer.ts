@@ -1156,6 +1156,24 @@ private drawAirport(cfg: Config, proj: ProjOpts): void {
       this.drawRunwayLabel(r.leIdent, r.le, cfg, proj);
       this.drawRunwayLabel(r.heIdent, r.he, cfg, proj);
 
+      const activeRunway = this.getLikelyActiveRunwayLabel();
+
+if (
+  activeRunway &&
+  cfg.showAirportLighting &&
+  this.isNightAtAirport(cfg)
+) {
+  if (r.leIdent === activeRunway) {
+    this.drawPapiLights(r.le, r.he, cfg, proj);
+    this.drawApproachLights(r.le, r.he, cfg, proj);
+  }
+
+  if (r.heIdent === activeRunway) {
+    this.drawPapiLights(r.he, r.le, cfg, proj);
+    this.drawApproachLights(r.he, r.le, cfg, proj);
+  }
+}
+
       cx += (a.x + b.x) / 2;
       cy += (a.y + b.y) / 2;
       n++;
@@ -1230,6 +1248,138 @@ private drawAirport(cfg: Config, proj: ProjOpts): void {
 
   ctx.fillStyle = rgba([235, 245, 255], 0.95 * cfg.brightness);
   ctx.fillText(label, p.x, p.y);
+
+  ctx.restore();
+}
+
+private drawPapiLights(
+  threshold: [number, number],
+  oppositeEnd: [number, number],
+  cfg: Config,
+  proj: ProjOpts,
+): void {
+  const ctx = this.ctx;
+
+  const a = this.toScreen(threshold, cfg, proj);
+  const b = this.toScreen(oppositeEnd, cfg, proj);
+
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.hypot(dx, dy);
+
+  if (len < 1) return;
+
+  const ux = dx / len;
+  const uy = dy / len;
+
+  const nx = -uy;
+  const ny = ux;
+
+  const along = 18;
+  const side = 18;
+  const spacing = 5;
+  const radius = 2.2;
+
+  const baseX = a.x + ux * along + nx * side;
+  const baseY = a.y + uy * along + ny * side;
+
+  ctx.save();
+  ctx.shadowBlur = 5;
+
+  for (let i = 0; i < 4; i++) {
+    const x = baseX + nx * i * spacing;
+    const y = baseY + ny * i * spacing;
+
+    const isWhite = i >= 2;
+
+    const color = isWhite
+      ? rgba([255, 255, 255], 0.95 * cfg.brightness)
+      : rgba([255, 60, 60], 0.95 * cfg.brightness);
+
+    ctx.fillStyle = color;
+    ctx.shadowColor = color;
+
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+
+private drawApproachLights(
+  threshold: [number, number],
+  oppositeEnd: [number, number],
+  cfg: Config,
+  proj: ProjOpts,
+): void {
+  const ctx = this.ctx;
+
+  const a = this.toScreen(threshold, cfg, proj);
+  const b = this.toScreen(oppositeEnd, cfg, proj);
+
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.hypot(dx, dy);
+
+  if (len < 1) return;
+
+  const ux = dx / len;
+  const uy = dy / len;
+
+  // Opposite direction of runway centerline, outside threshold.
+  const ox = -ux;
+  const oy = -uy;
+
+  const nx = -uy;
+  const ny = ux;
+
+  const pulse =
+    0.65 +
+    0.25 * Math.sin(this.frameT * 4);
+
+  const color = rgba(
+    [245, 250, 255],
+    pulse * cfg.brightness,
+  );
+
+  ctx.save();
+
+  ctx.fillStyle = color;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 6;
+
+  const spacing = 14;
+  const radius = 1.8;
+
+  // Centerline approach lights.
+  for (let i = 1; i <= 12; i++) {
+    const d = i * spacing;
+
+    const x = a.x + ox * d;
+    const y = a.y + oy * d;
+
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Crossbars for visual runway approach system.
+  for (const i of [4, 8, 12]) {
+    const d = i * spacing;
+    const cx = a.x + ox * d;
+    const cy = a.y + oy * d;
+
+    for (let s = -2; s <= 2; s++) {
+      const x = cx + nx * s * 6;
+      const y = cy + ny * s * 6;
+
+      ctx.beginPath();
+      ctx.arc(x, y, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
 
   ctx.restore();
 }
@@ -1573,8 +1723,8 @@ const s =
 
   private isNightAtAirport(cfg: Config): boolean {
   const hour = new Date().getHours();
-
   return hour >= 19 || hour < 6;
+  //return true
 }
 
   private labelLines(cfg: Config, ac: Aircraft): { text: string; kind: "title" | "sub" }[] {
