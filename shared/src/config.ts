@@ -88,10 +88,16 @@ export interface Config {
   rangeRings: boolean;
   compass: boolean;
   highlightEmergency: boolean;
+
+/** Show gate and parking stand markers. */
+showGates: boolean;
   /** Draw the airport (runways) at its true geographic position. */
   showAirport: boolean;
   /** Show the on-screen calibration HUD on the display. */
   showHud: boolean;
+  showAirlineNames: boolean;
+  showAirportLighting: boolean;
+  showGroundVehicles: boolean;
 
   // --- sky layer (sun / moon / stars / satellites at true positions) ---
   showStars: boolean;
@@ -121,11 +127,12 @@ export const DEFAULT_CONFIG: Config = {
   mirrorX: true,
   mirrorY: false,
   labelRotationDeg: 0,
-
+  showAirlineNames: false,
   minAltitudeFt: 100,
   maxAltitudeFt: 60000,
   hideOnGround: true,
-
+  showAirportLighting: true,
+  showGroundVehicles: false,
   interpolate: true,
   maxExtrapolationSec: 5,
   staleSec: 20,
@@ -169,7 +176,7 @@ export const DEFAULT_CONFIG: Config = {
   highlightEmergency: true,
   showAirport: true,
   showHud: false,
-
+  showGates: false,
   showStars: true,
   showSun: true,
   showMoon: true,

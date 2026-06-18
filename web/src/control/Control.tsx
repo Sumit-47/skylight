@@ -90,9 +90,36 @@ export function Control() {
               onChange={(v) => set({ labelRotationDeg: v })} />
           </Row>
           <Row label="Radius">
-            <Slider value={cfg.radiusMiles} min={0.5} max={10} step={0.5} unit="mi"
+            <Slider value={cfg.radiusMiles} min={0.5} max={75} step={0.5} unit="mi"
               onChange={(v) => set({ radiusMiles: v })} />
           </Row>
+
+          <Row label="Latitude">
+  <input
+    type="number"
+    value={cfg.centerLat}
+    step="0.0001"
+    onChange={(e) =>
+      set({
+        centerLat: Number(e.target.value),
+      })
+    }
+  />
+</Row>
+
+<Row label="Longitude">
+  <input
+    type="number"
+    value={cfg.centerLon}
+    step="0.0001"
+    onChange={(e) =>
+      set({
+        centerLon: Number(e.target.value),
+      })
+    }
+  />
+</Row>
+
         </Section>
 
         <Section title="View">
@@ -195,6 +222,32 @@ export function Control() {
           <Row label="Airport runways">
             <Toggle value={cfg.showAirport} onChange={(v) => set({ showAirport: v })} />
           </Row>
+
+          <Row label="Gates / stands">
+            <Toggle value={cfg.showGates} onChange={(v) => set({ showGates: v })} />
+          </Row>
+
+          <Row label="Airport lighting">
+            <Toggle
+              value={cfg.showAirportLighting}
+              onChange={(v) => set({ showAirportLighting: v })}
+             />
+          </Row>
+
+          <Row label="Airline names">
+            <Toggle
+              value={cfg.showAirlineNames}
+              onChange={(v) => set({ showAirlineNames: v })}
+            />
+          </Row>
+
+          <Row label="Ground vehicles">
+            <Toggle
+            value={cfg.showGroundVehicles}
+            onChange={(v) => set({ showGroundVehicles: v })}
+            />
+          </Row>
+
           <Row label="Highlight emergency">
             <Toggle value={cfg.highlightEmergency} onChange={(v) => set({ highlightEmergency: v })} />
           </Row>

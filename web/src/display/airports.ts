@@ -26,5 +26,27 @@ export const SFO: Airport = {
   ],
 };
 
+
+export const VABB: Airport = {
+  icao: "VABB",
+  name: "Mumbai",
+  runways: [
+    {
+      leIdent: "09",
+      heIdent: "27",
+      le: [19.0967, 72.8506],
+      he: [19.0969, 72.8822],
+      widthFt: 148
+    },
+    {
+      leIdent: "14",
+      heIdent: "32",
+      le: [19.0820, 72.8579],
+      he: [19.1026, 72.8767],
+      widthFt: 148
+    }
+  ]
+};
+
 /** Airports drawn on the map (currently just SFO; easy to extend). */
-export const AIRPORTS: Airport[] = [SFO];
+export const AIRPORTS: Airport[] = [SFO,VABB];

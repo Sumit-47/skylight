@@ -10,6 +10,7 @@
     "typecheck": "tsc"
   },
   "dependencies": {
+    "csv-parse": "^6.2.1",
     "express": "^4.21.2",
     "ws": "^8.18.0"
   },

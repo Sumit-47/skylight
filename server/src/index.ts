@@ -13,6 +13,10 @@ import { RouteEnricher } from "./enrich/routes.js";
 import { Poller } from "./datasource.js";
 import { Hub } from "./hub.js";
 import { TleStore } from "./tle.js";
+import { loadAirports } from "./airport-loader.js";
+import { AirportService } from "./airport-service.js";
+import { loadGeometry } from "./osm-loader.js";
+import { getMetar } from "./metar-service.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = resolve(__dirname, "../data");
@@ -32,6 +36,32 @@ const SUPPLEMENT_API = (process.env.SUPPLEMENT_API ?? "1") !== "0";
 const API_POLL_MS = Number(process.env.API_POLL_MS ?? 4000);
 
 async function main(): Promise<void> {
+
+  const airports = await loadAirports();
+  const airportService =
+    new AirportService(airports);
+
+  const nearest =
+  airportService.findNearestAirport(
+    19.0896,
+    72.8656
+  );
+
+console.log("Nearest:", nearest?.icao);
+  console.log("Airport Count:", airports.size);
+
+  const vabb = airports.get("VABB");
+
+console.log(
+  "VABB Runway Count:",
+  vabb?.runways.length
+);
+
+console.log(
+  "First Runway:",
+  vabb?.runways[0]
+);
+
   const store = new ConfigStore(resolve(DATA_DIR, "config.json"));
   await store.load();
 
@@ -67,6 +97,13 @@ async function main(): Promise<void> {
     onStatus: (status) => hub.broadcastStatus(status),
   });
 
+
+  //const hub = new Hub(server, {
+  //  store,
+  //  getSnapshot: () => poller.getSnapshot(),
+  //  getStatus: () => poller.getStatus(),
+  //});
+
   // --- REST API (handy for debugging + non-WS clients) ---
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
   app.get("/api/config", (_req, res) => res.json(store.get()));
@@ -75,6 +112,159 @@ async function main(): Promise<void> {
   app.get("/api/aircraft", (_req, res) => res.json(poller.getSnapshot()));
   app.get("/api/status", (_req, res) => res.json(poller.getStatus()));
   app.get("/api/tle", async (_req, res) => res.json(await tleStore.get()));
+  app.get("/api/metar", async (req, res) => {
+  try {
+    const icao = String(req.query.icao ?? "");
+
+    if (!icao) {
+      res.status(400).json({ error: "Missing ICAO code" });
+      return;
+    }
+
+    const metar = await getMetar(icao);
+
+    if (!metar) {
+      res.status(404).json({ error: `No METAR found for ${icao}` });
+      return;
+    }
+
+    res.json(metar);
+  } catch (err) {
+    console.error("[api/metar]", err);
+    res.status(500).json({ error: "Failed to load METAR" });
+  }
+});
+
+  
+  
+//  app.get("/api/airport-geometry", async (req, res) => {
+//  try {
+//    const icao = String(req.query.icao || "").toUpperCase();
+//
+  //  if (!icao) {
+    //  return res.status(400).json({ error: "Missing ICAO" });
+    //}
+//
+//    const geometry = await loadGeometry(icao);
+//
+//    if (!geometry) {
+//      return res.status(404).json({ error: `No geometry found for ${icao}` });
+//    }
+//
+//    res.json(geometry);
+//  } catch (err) {
+//    console.error("Airport geometry error:", err);
+//    res.status(500).json({ error: "Failed to load airport geometry" });
+//  }
+//});
+
+ 
+
+app.get("/api/airport", (_req, res) => {
+  try {
+    const cfg = store.get();
+
+    const airports =
+      airportService.findAirportsWithinRadius(
+        cfg.centerLat,
+        cfg.centerLon,
+        Math.max(cfg.radiusMiles, 75)
+      );
+
+    console.log(
+      "Nearby airports:",
+      airports.map((a) => a.icao)
+    );
+
+    const airport =
+      airports.find((a) => {
+        const path = resolve(
+          DATA_DIR,
+          "osm",
+          `${a.icao}.geojson`
+        );
+
+        const hasGeoJson = existsSync(path);
+
+        console.log(
+          "Checking geometry:",
+          a.icao,
+          path,
+          hasGeoJson
+        );
+
+        return hasGeoJson;
+      }) ?? airports[0];
+
+    if (!airport) {
+      return res.status(404).json({
+        error: "No airport found",
+      });
+    }
+
+    console.log("Selected airport:", airport.icao);
+
+    res.json(airport);
+  } catch (err) {
+    console.error("Airport lookup failed:", err);
+
+    res.status(500).json({
+      error: "Failed to resolve airport",
+    });
+  }
+});
+
+
+app.get("/api/airports", (_req, res) => {
+  try {
+    const cfg = store.get();
+
+    const airports =
+      airportService.findAirportsWithinRadius(
+        cfg.centerLat,
+        cfg.centerLon,
+        Math.max(cfg.radiusMiles, 75)
+      );
+
+    res.json(airports);
+  } catch (err) {
+    console.error("Nearby airports failed:", err);
+
+    res.status(500).json({
+      error: "Failed to resolve nearby airports",
+    });
+  }
+});
+
+app.get("/api/airport-geometry", async (req, res) => {
+  try {
+    const icao = String(req.query.icao || "").toUpperCase();
+
+    if (!icao) {
+      return res.status(400).json({
+        error: "Missing ICAO",
+      });
+    }
+
+    const geometry = await loadGeometry(icao);
+
+    if (!geometry) {
+      return res.status(404).json({
+        error: `No geometry found for ${icao}`,
+      });
+    }
+
+    res.json(geometry);
+  } catch (err) {
+    console.error("Airport geometry failed:", err);
+
+    res.status(500).json({
+      error: "Failed to load airport geometry",
+    });
+  }
+});
+
+
   app.post("/api/source", (req, res) => {
     const s = req.body?.source;
     if (s !== "radio" && s !== "api") {

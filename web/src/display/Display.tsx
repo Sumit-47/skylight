@@ -3,6 +3,8 @@ import type { Config, Theme } from "@shared/index.js";
 import { DEFAULT_CONFIG } from "@shared/index.js";
 import { useStream } from "../lib/useStream.js";
 import { Renderer } from "./renderer.js";
+import type { Airport, AirportGeometry } from "@shared/index.js";
+import type { MetarInfo } from "@shared/index.js";
 
 const THEMES: Theme[] = ["ambient", "telemetry", "focus"];
 
@@ -13,12 +15,23 @@ export function Display() {
 
   // Keep the latest config in a ref so the RAF loop always reads fresh values.
   const configRef = useRef<Config>(state.config ?? DEFAULT_CONFIG);
+const airportsRef = useRef<Airport[]>([]);
+const geometriesRef = useRef<AirportGeometry[]>([]);
+  const metarRef = useRef<MetarInfo | null>(null);
+  //const geometryRef = useRef<AirportGeometry | null>(null);
+
   configRef.current = state.config ?? DEFAULT_CONFIG;
 
   // Create renderer once.
   useEffect(() => {
     if (!canvasRef.current) return;
-    const r = new Renderer(canvasRef.current, () => configRef.current);
+    const r = new Renderer(
+  canvasRef.current,
+  () => configRef.current,
+  () => airportsRef.current,
+  () => geometriesRef.current,
+  () => metarRef.current
+);
     rendererRef.current = r;
     r.start();
     const onResize = () => r.resize();
@@ -30,6 +43,75 @@ export function Display() {
     };
   }, []);
 
+
+async function loadMetar(icao: string) {
+  try {
+    const res = await fetch(`/api/metar?icao=${encodeURIComponent(icao)}`);
+
+    if (!res.ok) {
+      metarRef.current = null;
+      return;
+    }
+
+    metarRef.current = await res.json();
+  } catch (err) {
+    console.warn("[display] Failed to load METAR", err);
+    metarRef.current = null;
+  }
+}
+
+  useEffect(() => {
+  async function loadAirportsAndGeometries() {
+    try {
+      const airportsResponse = await fetch("/api/airports");
+
+      if (!airportsResponse.ok) {
+        throw new Error(`Airports HTTP ${airportsResponse.status}`);
+      }
+
+      const airports = await airportsResponse.json() as Airport[];
+      airportsRef.current = airports;
+
+      console.log("Airports Loaded:", airports.map((a) => a.icao));
+
+      const geometries: AirportGeometry[] = [];
+
+      for (const airport of airports) {
+        try {
+          const geometryResponse = await fetch(
+            `/api/airport-geometry?icao=${airport.icao}`
+          );
+
+          if (!geometryResponse.ok) {
+            continue;
+          }
+
+          const geometry = await geometryResponse.json() as AirportGeometry;
+          geometries.push(geometry);
+        } catch {
+          // skip airports without geometry
+        }
+      }
+
+      geometriesRef.current = geometries;
+
+      console.log(
+        "Airport Geometries Loaded:",
+        geometries.length
+      );
+    } catch (err) {
+      console.error("Failed loading airports / geometries", err);
+      airportsRef.current = [];
+      geometriesRef.current = [];
+    }
+  }
+
+  void loadAirportsAndGeometries();
+}, [
+  state.config?.centerLat,
+  state.config?.centerLon,
+  state.config?.radiusMiles,
+]);
   // Feed snapshots.
   useEffect(() => {
     rendererRef.current?.update(state.aircraft);

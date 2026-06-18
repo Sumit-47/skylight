@@ -23,10 +23,13 @@ import {
   type Meters,
   type Point,
 } from "@shared/index.js";
-import { AIRPORTS } from "./airports.js";
+//mport { AIRPORTS } from "./airports.js";
 import { classifyGlyph, drawAircraftGlyph, GLYPH_SCALE } from "./aircraftGlyph.js";
 import { computeSky, type Sky, type Tle } from "./celestial.js";
 import { ASTERISMS } from "./stars.js";
+import type { Airport, AirportGeometry } from "@shared/index.js";
+import type { MetarInfo } from "@shared/index.js";
+
 
 /** How far in the past we render, ms. Just over the ~1 Hz fix interval. */
 const RENDER_DELAY_MS = 1150;
@@ -111,10 +114,13 @@ export class Renderer {
   private skyComputedAt = 0;
   private skyOffsetUsed = NaN;
 
-  constructor(
-    private canvas: HTMLCanvasElement,
-    private getConfig: () => Config,
-  ) {
+constructor(
+  private canvas: HTMLCanvasElement,
+  private getConfig: () => Config,
+  private getAirports: () => Airport[],
+  private getGeometries: () => AirportGeometry[],
+  private getMetar: () => MetarInfo | null
+) {
     const ctx = canvas.getContext("2d", { alpha: false });
     if (!ctx) throw new Error("2D canvas context unavailable");
     this.ctx = ctx;
@@ -260,7 +266,13 @@ export class Renderer {
     this.updateSky(cfg, now);
     this.drawSky(cfg, proj);
     this.drawOverlays(cfg, proj);
-    if (cfg.showAirport) this.drawAirport(cfg, proj);
+    if (cfg.showAirport) {
+  this.drawAirportGeometry(cfg, proj);
+  this.drawAirport(cfg, proj);
+  if (cfg.showGroundVehicles && cfg.radiusMiles <= 6) {
+    this.drawGroundVehicles(cfg, proj);
+  }
+}
 
     const tt = now - RENDER_DELAY_MS;
     const visible: Visible[] = [];
@@ -291,7 +303,24 @@ export class Renderer {
       const edgeFade = clamp01((cfg.radiusMiles - rangeMi) / (cfg.radiusMiles * 0.14));
       const alpha = clamp01(edgeFade) * tr.life * cfg.brightness;
       const alt = tr.ac.altBaro ?? tr.ac.altGeom ?? 0;
-      const color = cfg.altitudeColor ? altRamp(alt) : hexToRgb(cfg.palette.glyph);
+      //const color = cfg.altitudeColor ? altRamp(alt) : hexToRgb(cfg.palette.glyph);
+      let color = cfg.altitudeColor
+  ? altRamp(alt)
+  : hexToRgb(cfg.palette.glyph);
+
+const vr = tr.ac.baroRate ?? 0;
+
+if (tr.ac.onGround) {
+  color = [255, 220, 120];
+}
+else if (vr < -300) {
+  // Arrival / descending
+  color = [90, 255, 140];
+}
+else if (vr > 300) {
+  // Departure / climbing
+  color = [80, 210, 255];
+}
       const emergency = cfg.highlightEmergency && !!tr.ac.squawk && EMERGENCY_SQUAWKS.has(tr.ac.squawk);
 
       visible.push({ tr, m, p, heading, rangeMi, alpha, color, emergency });
@@ -329,6 +358,67 @@ export class Renderer {
     draw();
     ctx.restore();
   }
+
+
+  private getLikelyActiveRunwayLabel(): string | null {
+  const metar = this.getMetar();
+  const geometries = this.getGeometries();
+
+  if (!geometries.length) return null;
+
+  if (
+    metar?.windDirDeg == null ||
+    metar.windSpeedKt == null ||
+    metar.windSpeedKt < 3
+  ) {
+    return null;
+  }
+
+  let bestRunway: string | null = null;
+  let bestDiff = Infinity;
+
+  for (const geo of geometries) {
+    for (const feature of geo.features) {
+      if (feature.properties?.aeroway !== "runway") continue;
+
+      const runwayName = String(
+        feature.properties?.ref ??
+        feature.properties?.name ??
+        ""
+      );
+
+      const parts = runwayName
+        .split(/[\/\s-]+/)
+        .map((p) => p.trim())
+        .filter(Boolean);
+
+      for (const part of parts) {
+        const match = part.match(/^(\d{2})([LCR])?$/);
+        if (!match) continue;
+
+        const number = match[1];
+        const suffix = match[2] ?? "";
+        const label = number + suffix;
+
+        const heading =
+          number === "36"
+            ? 360
+            : Number(number) * 10;
+
+        const diff = Math.abs(
+          ((heading - metar.windDirDeg + 540) % 360) - 180
+        );
+
+        if (diff < bestDiff) {
+          bestDiff = diff;
+          bestRunway = label;
+        }
+      }
+    }
+  }
+
+  return bestDiff <= 35 ? bestRunway : null;
+}
 
   private screenHeading(tr: Track, tt: number, proj: ProjOpts): number {
     const a = this.sampleAt(tr, tt - 400, this.getConfig());
@@ -406,67 +496,715 @@ export class Renderer {
     }
   }
 
-  // --- airport: runways at true geographic position ---
-  private drawAirport(cfg: Config, proj: ProjOpts): void {
-    const ctx = this.ctx;
-    const rwyRgb: [number, number, number] = [150, 180, 220];
-    for (const ap of AIRPORTS) {
-      let cx = 0;
-      let cy = 0;
-      let n = 0;
-      for (const r of ap.runways) {
-        const a = this.toScreen(r.le, cfg, proj);
-        const b = this.toScreen(r.he, cfg, proj);
-        // True runway width in px, nudged up a touch so it stays legible.
-        const wpx = Math.max(2.5, r.widthFt * 0.3048 * proj.pxPerM * 1.4);
+private drawGroundVehicles(
+  cfg: Config,
+  proj: ProjOpts,
+): void {
+  const geometries = this.getGeometries();
+  if (!geometries.length) return;
 
-        ctx.save();
-        ctx.lineCap = "butt";
-        // Asphalt body.
-        ctx.strokeStyle = rgba(rwyRgb, 0.16 * cfg.brightness);
-        ctx.lineWidth = wpx;
-        ctx.beginPath();
-        ctx.moveTo(a.x, a.y);
-        ctx.lineTo(b.x, b.y);
-        ctx.stroke();
-        // Dashed centerline.
-        ctx.strokeStyle = rgba([210, 226, 255], 0.22 * cfg.brightness);
-        ctx.lineWidth = 1;
-        ctx.setLineDash([6, 6]);
-        ctx.beginPath();
-        ctx.moveTo(a.x, a.y);
-        ctx.lineTo(b.x, b.y);
-        ctx.stroke();
-        ctx.restore();
+  const taxiways: [number, number][][] = [];
 
-        cx += (a.x + b.x) / 2;
-        cy += (a.y + b.y) / 2;
-        n++;
-      }
-      // Airport label at the runway centroid.
-      if (n) {
-        cx /= n;
-        cy /= n;
-        ctx.save();
-        ctx.font = `300 13px ${cfg.fonts.label}`;
-        ctx.fillStyle = rgba(rwyRgb, 0.5 * cfg.brightness);
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        try {
-          ctx.letterSpacing = "4px";
-        } catch {
-          /* noop */
-        }
-        ctx.fillText(ap.name, cx, cy);
-        try {
-          ctx.letterSpacing = "0px";
-        } catch {
-          /* noop */
-        }
-        ctx.restore();
+  for (const geo of geometries) {
+    for (const feature of geo.features) {
+      const aeroway = feature.properties?.aeroway;
+      const geom = feature.geometry;
+
+      if (
+        aeroway === "taxiway" &&
+        geom.type === "LineString"
+      ) {
+        taxiways.push(
+          geom.coordinates as [number, number][]
+        );
       }
     }
   }
+
+  if (!taxiways.length) return;
+
+  const ctx = this.ctx;
+  const vehicleCount = Math.min(18, taxiways.length);
+  const t = this.frameT;
+
+  ctx.save();
+
+  for (let i = 0; i < vehicleCount; i++) {
+    const line = taxiways[i % taxiways.length];
+
+    if (line.length < 2) continue;
+
+    const segIndex = Math.floor((i * 7) % (line.length - 1));
+
+    const a = line[segIndex];
+    const b = line[segIndex + 1];
+
+    const phase = (t * (0.04 + i * 0.003) + i * 0.17) % 1;
+
+    const lon = a[0] + (b[0] - a[0]) * phase;
+    const lat = a[1] + (b[1] - a[1]) * phase;
+
+    const p = this.toScreen([lat, lon], cfg, proj);
+
+    const color =
+      i % 3 === 0
+        ? rgba([255, 210, 80], 0.85 * cfg.brightness)
+        : i % 3 === 1
+          ? rgba([120, 190, 255], 0.75 * cfg.brightness)
+          : rgba([245, 245, 245], 0.75 * cfg.brightness);
+
+    const heading = Math.atan2(
+      b[1] - a[1],
+      b[0] - a[0],
+    );
+
+    this.drawGroundVehicleIcon(
+      p.x,
+      p.y,
+      heading,
+      i % 3,
+      color,
+      cfg,
+    );
+  }
+
+  ctx.restore();
+}
+
+
+private drawGroundVehicleIcon(
+  x: number,
+  y: number,
+  heading: number,
+  kind: number,
+  color: string,
+  cfg: Config,
+): void {
+  const ctx = this.ctx;
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(heading);
+
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 3;
+  ctx.fillStyle = color;
+  ctx.strokeStyle = rgba([0, 0, 0], 0.65 * cfg.brightness);
+  ctx.lineWidth = 0.7;
+
+  if (kind === 0) {
+    // Baggage cart / small service car
+    ctx.beginPath();
+    ctx.roundRect(-5, -2.5, 10, 5, 1.5);
+    ctx.fill();
+    ctx.stroke();
+  } else if (kind === 1) {
+    // Airport bus
+    ctx.beginPath();
+    ctx.roundRect(-8, -3, 16, 6, 1.5);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = rgba([0, 0, 0], 0.45 * cfg.brightness);
+    ctx.fillRect(-5.5, -1.8, 2, 3.6);
+ctx.fillRect(-2.5, -1.8, 2, 3.6);
+ctx.fillRect(0.5, -1.8, 2, 3.6);
+ctx.fillRect(3.5, -1.8, 2, 3.6);
+  } else {
+    // Pushback tug / truck
+    ctx.beginPath();
+    ctx.roundRect(-4, -2, 8, 4, 1);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = rgba([255, 255, 255], 0.7 * cfg.brightness);
+    ctx.fillRect(1.2, -1.3, 1.8, 2.6);
+  }
+
+  // Wheels
+  ctx.fillStyle = rgba([10, 10, 15], 0.9 * cfg.brightness);
+  ctx.beginPath();
+  ctx.arc(-4, -3.2, 1.1, 0, Math.PI * 2);
+ctx.arc(4, -3.2, 1.1, 0, Math.PI * 2);
+ctx.arc(-4, 3.2, 1.1, 0, Math.PI * 2);
+ctx.arc(4, 3.2, 1.1, 0, Math.PI * 2);
+  ctx.arc(2.2, -2.1, 0.7, 0, Math.PI * 2);
+  ctx.arc(-2.2, 2.1, 0.7, 0, Math.PI * 2);
+  ctx.arc(2.2, 2.1, 0.7, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+private drawAirportGeometry(cfg: Config, proj: ProjOpts): void {
+  const geometries = this.getGeometries();
+if (!geometries.length) return;
+
+  const night =
+  cfg.showAirportLighting &&
+  this.isNightAtAirport(cfg);
+
+
+
+  for (const geo of geometries) {
+  for (const feature of geo.features) {
+    const aeroway = feature.properties?.aeroway;
+    const geom = feature.geometry;
+
+    if (geom.type === "LineString") {
+      const coords = geom.coordinates as [number, number][];
+
+      if (aeroway === "taxiway") {
+        this.drawOsmLine(
+          coords,
+          cfg,
+          proj,
+          night
+            ? rgba([70, 130, 255], 0.55 * cfg.brightness)
+            : rgba([120, 140, 170], 0.35 * cfg.brightness),
+          night ? 2.5 : 2,
+        );
+      }
+
+      if (aeroway === "runway") {
+  this.drawOsmLine(
+    coords,
+    cfg,
+    proj,
+    night
+      ? rgba([230, 240, 255], 0.75 * cfg.brightness)
+      : rgba([170, 200, 240], 0.45 * cfg.brightness),
+    night ? 5 : 4,
+  );
+
+  if (night) {
+    this.drawRunwayEdgeLights(
+      coords,
+      cfg,
+      proj,
+    );
+  }
+}
+    }
+
+    if (geom.type === "Point") {
+      if (!cfg.showGates) {
+        continue;
+      }
+
+      const coord = geom.coordinates as [number, number];
+
+      const label = String(
+        feature.properties?.ref ??
+        feature.properties?.name ??
+        ""
+      );
+
+      if (aeroway === "gate") {
+        this.drawOsmPoint(
+          coord,
+          cfg,
+          proj,
+          night
+            ? rgba([80, 220, 255], 0.9 * cfg.brightness)
+            : rgba([0, 255, 255], 0.75 * cfg.brightness),
+          4,
+          label,
+        );
+      }
+
+      if (aeroway === "parking_position") {
+        this.drawOsmPoint(
+          coord,
+          cfg,
+          proj,
+          night
+            ? rgba([255, 210, 100], 0.9 * cfg.brightness)
+            : rgba([255, 220, 120], 0.75 * cfg.brightness),
+          2.5,
+          label,
+        );
+      }
+
+      if (aeroway === "helipad") {
+  this.drawHelipadPoint(
+    coord,
+    cfg,
+    proj,
+  );
+
+  this.drawOsmFeatureLabel(
+    feature.properties?.name,
+    coord,
+    cfg,
+    proj,
+  );
+}
+    }
+
+    if (geom.type === "Polygon") {
+      const rings = geom.coordinates as [number, number][][];
+
+      if (aeroway === "apron") {
+        this.drawOsmPolygon(
+          rings,
+          cfg,
+          proj,
+          night
+            ? rgba([60, 80, 120], 0.32 * cfg.brightness)
+            : rgba([90, 105, 130], 0.22 * cfg.brightness),
+        );
+      }
+
+      if (aeroway === "helipad") {
+  this.drawOsmPolygon(
+    rings,
+    cfg,
+    proj,
+    rgba([110, 210, 170], 0.24 * cfg.brightness),
+  );
+
+  const first = rings[0]?.[0];
+
+  if (first) {
+    const labelCoord: [number, number] = [
+      first[0],
+      first[1],
+    ];
+
+    this.drawOsmFeatureLabel(
+      feature.properties?.name,
+      labelCoord,
+      cfg,
+      proj,
+    );
+  }
+}
+
+      if (aeroway === "terminal") {
+        this.drawOsmPolygon(
+          rings,
+          cfg,
+          proj,
+          night
+            ? rgba([255, 210, 120], 0.28 * cfg.brightness)
+            : rgba([150, 170, 210], 0.25 * cfg.brightness),
+        );
+      }
+    }
+
+    if (geom.type === "MultiPolygon") {
+      const polygons = geom.coordinates as [number, number][][][];
+
+      for (const rings of polygons) {
+        if (aeroway === "apron") {
+          this.drawOsmPolygon(
+            rings,
+            cfg,
+            proj,
+            night
+              ? rgba([60, 80, 120], 0.32 * cfg.brightness)
+              : rgba([90, 105, 130], 0.22 * cfg.brightness),
+          );
+        }
+
+        if (aeroway === "helipad") {
+  this.drawOsmPolygon(
+    rings,
+    cfg,
+    proj,
+    rgba([110, 210, 170], 0.24 * cfg.brightness),
+  );
+
+  const first = rings[0]?.[0];
+
+  if (first) {
+    const labelCoord: [number, number] = [
+      first[0],
+      first[1],
+    ];
+
+    this.drawOsmFeatureLabel(
+      feature.properties?.name,
+      labelCoord,
+      cfg,
+      proj,
+    );
+  }
+}
+
+        if (aeroway === "terminal") {
+          this.drawOsmPolygon(
+            rings,
+            cfg,
+            proj,
+            night
+              ? rgba([255, 210, 120], 0.28 * cfg.brightness)
+              : rgba([150, 170, 210], 0.25 * cfg.brightness),
+          );
+        }
+      }
+    }
+  }
+}
+}
+
+private drawHelipadPoint(
+  coord: [number, number],
+  cfg: Config,
+  proj: ProjOpts,
+): void {
+  const [lon, lat] = coord;
+  const p = this.toScreen([lat, lon], cfg, proj);
+
+  const ctx = this.ctx;
+
+  ctx.save();
+
+  ctx.strokeStyle = rgba([120, 255, 180], 0.9 * cfg.brightness);
+  ctx.fillStyle = rgba([120, 255, 180], 0.16 * cfg.brightness);
+  ctx.lineWidth = 1.5;
+
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, 7, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.font = `700 9px ${cfg.fonts.label}`;
+  ctx.fillStyle = rgba([230, 255, 240], 0.95 * cfg.brightness);
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("H", p.x, p.y);
+
+  ctx.restore();
+}
+
+
+private drawOsmFeatureLabel(
+  label: unknown,
+  coord: [number, number],
+  cfg: Config,
+  proj: ProjOpts,
+): void {
+  if (!label) return;
+
+  const [lon, lat] = coord;
+  const p = this.toScreen([lat, lon], cfg, proj);
+
+  const ctx = this.ctx;
+
+  ctx.save();
+  ctx.font = `500 10px ${cfg.fonts.label}`;
+  ctx.fillStyle = rgba([230, 245, 255], 0.75 * cfg.brightness);
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+
+  ctx.fillText(
+    String(label),
+    p.x,
+    p.y + 9,
+  );
+
+  ctx.restore();
+}
+
+private drawOsmPoint(
+  coord: [number, number],
+  cfg: Config,
+  proj: ProjOpts,
+  fill: string,
+  radius: number,
+  label?: string,
+): void {
+  const [lon, lat] = coord;
+  const p = this.toScreen([lat, lon], cfg, proj);
+
+  const ctx = this.ctx;
+
+  ctx.save();
+
+  ctx.fillStyle = fill;
+  ctx.strokeStyle = rgba([220, 240, 255], 0.7 * cfg.brightness);
+  ctx.lineWidth = 1;
+
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  if (label) {
+    ctx.font = "10px sans-serif";
+    ctx.fillStyle = rgba([220, 240, 255], 0.85 * cfg.brightness);
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillText(label, p.x + radius + 3, p.y);
+  }
+
+  ctx.restore();
+}
+
+private drawOsmLine(
+  coords: [number, number][],
+  cfg: Config,
+  proj: ProjOpts,
+  stroke: string,
+  width: number,
+): void {
+  if (coords.length < 2) return;
+
+  const ctx = this.ctx;
+  ctx.save();
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = width;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  ctx.beginPath();
+
+  for (let i = 0; i < coords.length; i++) {
+    const [lon, lat] = coords[i];
+    const p = this.toScreen([lat, lon], cfg, proj);
+
+    if (i === 0) ctx.moveTo(p.x, p.y);
+    else ctx.lineTo(p.x, p.y);
+  }
+
+  ctx.stroke();
+  ctx.restore();
+}
+
+private drawRunwayEdgeLights(
+  coords: [number, number][],
+  cfg: Config,
+  proj: ProjOpts,
+): void {
+  if (coords.length < 2) return;
+
+  const ctx = this.ctx;
+
+  const points = coords.map(([lon, lat]) =>
+    this.toScreen([lat, lon], cfg, proj)
+  );
+
+  ctx.save();
+
+  const pulse =
+    0.45 +
+    0.35 *
+      Math.sin(this.frameT * 3);
+
+  ctx.fillStyle = rgba(
+    [210, 235, 255],
+    pulse * cfg.brightness
+  );
+
+  const spacingPx = 26;
+  const offsetPx = 5;
+  const radiusPx = 1.4;
+
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i];
+    const b = points[i + 1];
+
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len = Math.hypot(dx, dy);
+
+    if (len < 1) continue;
+
+    const ux = dx / len;
+    const uy = dy / len;
+
+    const nx = -uy;
+    const ny = ux;
+
+    for (let d = 0; d <= len; d += spacingPx) {
+      const x = a.x + ux * d;
+      const y = a.y + uy * d;
+
+      ctx.beginPath();
+      ctx.arc(
+        x + nx * offsetPx,
+        y + ny * offsetPx,
+        radiusPx,
+        0,
+        Math.PI * 2
+      );
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.arc(
+        x - nx * offsetPx,
+        y - ny * offsetPx,
+        radiusPx,
+        0,
+        Math.PI * 2
+      );
+      ctx.fill();
+    }
+  }
+
+  ctx.restore();
+}
+
+private drawOsmPolygon(
+  rings: [number, number][][],
+  cfg: Config,
+  proj: ProjOpts,
+  fill: string,
+): void {
+  if (!rings.length) return;
+
+  const ctx = this.ctx;
+  ctx.save();
+  ctx.fillStyle = fill;
+  ctx.strokeStyle = rgba([130, 150, 180], 0.25 * cfg.brightness);
+  ctx.lineWidth = 1;
+
+  ctx.beginPath();
+
+  for (const ring of rings) {
+    for (let i = 0; i < ring.length; i++) {
+      const [lon, lat] = ring[i];
+      const p = this.toScreen([lat, lon], cfg, proj);
+
+      if (i === 0) ctx.moveTo(p.x, p.y);
+      else ctx.lineTo(p.x, p.y);
+    }
+
+    ctx.closePath();
+  }
+
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
+  // --- airport: runways at true geographic position ---
+private drawAirport(cfg: Config, proj: ProjOpts): void {
+  const ctx = this.ctx;
+  const rwyRgb: [number, number, number] = [150, 180, 220];
+  const airports = this.getAirports();
+
+  if (!airports.length) return;
+
+  const activeRunway = this.getLikelyActiveRunwayLabel();
+
+  for (const ap of airports) {
+    let cx = 0;
+    let cy = 0;
+    let n = 0;
+
+    for (const r of ap.runways) {
+      const a = this.toScreen(r.le, cfg, proj);
+      const b = this.toScreen(r.he, cfg, proj);
+
+      const wpx = Math.max(
+        2.5,
+        r.widthFt * 0.3048 * proj.pxPerM * 1.4,
+      );
+
+      ctx.save();
+      ctx.lineCap = "butt";
+
+      ctx.strokeStyle = rgba(rwyRgb, 0.16 * cfg.brightness);
+      ctx.lineWidth = wpx;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+
+      ctx.strokeStyle = rgba([210, 226, 255], 0.22 * cfg.brightness);
+      ctx.lineWidth = 1;
+      ctx.setLineDash([6, 6]);
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+
+      ctx.restore();
+
+      this.drawRunwayLabel(r.leIdent, r.le, cfg, proj);
+      this.drawRunwayLabel(r.heIdent, r.he, cfg, proj);
+
+      cx += (a.x + b.x) / 2;
+      cy += (a.y + b.y) / 2;
+      n++;
+    }
+
+    if (n) {
+      cx /= n;
+      cy /= n;
+
+      ctx.save();
+      ctx.font = `300 13px ${cfg.fonts.label}`;
+      ctx.fillStyle = rgba(rwyRgb, 0.5 * cfg.brightness);
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+
+      try {
+        ctx.letterSpacing = "4px";
+      } catch {
+        /* noop */
+      }
+
+      ctx.fillText(ap.name, cx, cy);
+
+      try {
+        ctx.letterSpacing = "0px";
+      } catch {
+        /* noop */
+      }
+
+      ctx.restore();
+    }
+  }
+
+  if (activeRunway) {
+    ctx.save();
+    ctx.font = `600 14px ${cfg.fonts.label}`;
+    ctx.fillStyle = rgba([120, 255, 170], 0.9 * cfg.brightness);
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+
+    ctx.fillText(
+      `ACTIVE RWY ${activeRunway}`,
+      16,
+      cfg.showHud ? 42 : 16,
+    );
+
+    ctx.restore();
+  }
+}
+
+
+  private drawRunwayLabel(
+  label: string,
+  coord: [number, number],
+  cfg: Config,
+  proj: ProjOpts,
+): void {
+  if (!label) return;
+
+  const p = this.toScreen(coord, cfg, proj);
+  const ctx = this.ctx;
+
+  ctx.save();
+
+  ctx.font = `700 11px ${cfg.fonts.label}`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  ctx.strokeStyle = rgba([0, 0, 0], 0.85 * cfg.brightness);
+  ctx.lineWidth = 3;
+  ctx.strokeText(label, p.x, p.y);
+
+  ctx.fillStyle = rgba([235, 245, 255], 0.95 * cfg.brightness);
+  ctx.fillText(label, p.x, p.y);
+
+  ctx.restore();
+}
+
 
   private toScreen(ll: [number, number], cfg: Config, proj: ProjOpts): Point {
     return project(llToMeters(ll[0], ll[1], cfg.centerLat, cfg.centerLon), proj);
@@ -716,7 +1454,27 @@ export class Renderer {
     const ctx = this.ctx;
     const color = v.emergency ? hexToRgb(cfg.palette.warn) : v.color;
     const kind = classifyGlyph(v.tr.ac);
-    const s = cfg.glyphSizePx * GLYPH_SCALE[kind];
+    let zoomScale = 1;
+
+if (cfg.radiusMiles < 3.5) {
+  const t = Math.max(
+    0,
+    Math.min(1, (cfg.radiusMiles - 1) / 2)
+  );
+
+  zoomScale = 0.55 + t * 0.45;
+}
+else if (cfg.radiusMiles > 10) {
+  zoomScale = Math.min(
+    1,
+    Math.sqrt(10 / cfg.radiusMiles)
+  );
+}
+
+const s =
+  cfg.glyphSizePx *
+  GLYPH_SCALE[kind] *
+  zoomScale;
 
     ctx.save();
     ctx.translate(v.p.x, v.p.y);
@@ -792,10 +1550,27 @@ export class Renderer {
     return false;
   }
 
+
+  private isNightAtAirport(cfg: Config): boolean {
+  const hour = new Date().getHours();
+
+  return hour >= 19 || hour < 6;
+}
+
   private labelLines(cfg: Config, ac: Aircraft): { text: string; kind: "title" | "sub" }[] {
     const f = cfg.showFields;
     const out: { text: string; kind: "title" | "sub" }[] = [];
-    const title = f.flight ? ac.flight ?? ac.hex.toUpperCase() : ac.airline;
+    let title = f.flight
+  ? ac.flight ?? ac.hex.toUpperCase()
+  : ac.airline;
+
+if (
+  cfg.showAirlineNames &&
+  f.flight &&
+  ac.airline
+) {
+  title = `${title} · ${ac.airline}`;
+}
     if (title) out.push({ text: title, kind: "title" });
 
     const sub: string[] = [];

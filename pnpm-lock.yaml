@@ -20,6 +20,9 @@ importers:
 
   server:
     dependencies:
+      csv-parse:
+        specifier: ^6.2.1
+        version: 6.2.1
       express:
         specifier: ^4.21.2
         version: 4.22.2
@@ -780,6 +783,9 @@ packages:
 
   csstype@3.2.3:
     resolution: {integrity: sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==}
+
+  csv-parse@6.2.1:
+    resolution: {integrity: sha512-LRLMV+UCyfMokp8Wb411duBf1gaBKJfOfBWU9eHMJ+b+cJYZsNu3AFmjJf3+yPGd59Exz1TsMjaSFyxnYB9+IQ==}
 
   debug@2.6.9:
     resolution: {integrity: sha512-bC7ElrdJaJnPbAP+1EotYvqZsb3ecl5wi6Bfi6BJTUcNowp6cvspg0jXznRTKDjm/E7AdgFBVeAPVMNcKGsHMA==}
@@ -1842,6 +1848,8 @@ snapshots:
   cookie@0.7.2: {}
 
   csstype@3.2.3: {}
+
+  csv-parse@6.2.1: {}
 
   debug@2.6.9:
     dependencies:
