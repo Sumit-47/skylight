@@ -1309,7 +1309,7 @@ if (
   r.he,
   cfg,
   proj,
-  this.getPapiWhiteCount(r.le, cfg),
+  this.getPapiWhiteCount(r.le, r.he, cfg),
 );
     this.drawApproachLights(r.le, r.he, cfg, proj);
   }
@@ -1320,7 +1320,7 @@ if (
   r.le,
   cfg,
   proj,
-  this.getPapiWhiteCount(r.he, cfg),
+  this.getPapiWhiteCount(r.he, r.le, cfg),
 );
     this.drawApproachLights(r.he, r.le, cfg, proj);
   }
@@ -1499,8 +1499,84 @@ const color = isWhite
   ctx.restore();
 }
 
+private isAircraftInApproachFunnel(
+  ac: Aircraft,
+  threshold: [number, number],
+  oppositeEnd: [number, number],
+  cfg: Config,
+): boolean {
+  if (ac.lat == null || ac.lon == null) return false;
+
+  const thresholdM = llToMeters(
+    threshold[0],
+    threshold[1],
+    cfg.centerLat,
+    cfg.centerLon,
+  );
+
+  const oppositeM = llToMeters(
+    oppositeEnd[0],
+    oppositeEnd[1],
+    cfg.centerLat,
+    cfg.centerLon,
+  );
+
+  const acM = llToMeters(
+    ac.lat,
+    ac.lon,
+    cfg.centerLat,
+    cfg.centerLon,
+  );
+
+  const runwayDx = oppositeM.east - thresholdM.east;
+  const runwayDy = oppositeM.north - thresholdM.north;
+  const runwayLen = Math.hypot(runwayDx, runwayDy);
+
+  if (runwayLen < 1) return false;
+
+  // Direction outside the landing threshold.
+  const approachUx = -runwayDx / runwayLen;
+  const approachUy = -runwayDy / runwayLen;
+
+  const dx = acM.east - thresholdM.east;
+  const dy = acM.north - thresholdM.north;
+
+  const distanceAlongFinal =
+    dx * approachUx +
+    dy * approachUy;
+
+  // Aircraft must be before the runway threshold, not behind/on runway.
+  if (distanceAlongFinal < 500 || distanceAlongFinal > 14000) {
+    return false;
+  }
+
+  const lateralOffset =
+    Math.abs(
+      dx * -approachUy +
+      dy * approachUx,
+    );
+
+  // Funnel widens with distance.
+  const allowedOffset =
+    250 + distanceAlongFinal * 0.10;
+
+  if (lateralOffset > allowedOffset) {
+    return false;
+  }
+
+  const vr = ac.baroRate ?? 0;
+
+  // Prefer descending/stable aircraft, reject clear climb-outs.
+  if (vr > 400) {
+    return false;
+  }
+
+  return true;
+}
+
 private getPapiWhiteCount(
   threshold: [number, number],
+  oppositeEnd: [number, number],
   cfg: Config,
 ): number {
   const thresholdM = llToMeters(
@@ -1521,11 +1597,20 @@ private getPapiWhiteCount(
     if (ac.lat == null || ac.lon == null) continue;
 
     const op = this.classifyOperation(ac, cfg);
-
     if (op !== "arrival") continue;
 
-    const altFt = ac.altGeom ?? ac.altBaro;
+    if (
+      !this.isAircraftInApproachFunnel(
+        ac,
+        threshold,
+        oppositeEnd,
+        cfg,
+      )
+    ) {
+      continue;
+    }
 
+    const altFt = ac.altGeom ?? ac.altBaro;
     if (altFt == null) continue;
 
     const acM = llToMeters(
@@ -1540,7 +1625,7 @@ private getPapiWhiteCount(
 
     const distanceM = Math.hypot(dx, dy);
 
-    if (distanceM < 300 || distanceM > 13000) continue;
+    if (distanceM < 300 || distanceM > 14000) continue;
 
     const angleRad = Math.atan2(
       altFt * 0.3048,
@@ -1562,7 +1647,7 @@ private getPapiWhiteCount(
   }
 
   if (!best) {
-    return 2; // default on-slope display
+    return 2;
   }
 
   if (best.angleDeg >= 3.5) return 4;
