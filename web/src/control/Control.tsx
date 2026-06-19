@@ -310,6 +310,12 @@ const [locationQuery, setLocationQuery] = useState("");
               onChange={(v) => set({ showAirportLighting: v })}
              />
           </Row>
+          <Row label="Landing queue">
+  <Toggle
+    value={cfg.showLandingQueue}
+    onChange={(v) => set({ showLandingQueue: v })}
+  />
+</Row>
 
           <Row label="Airline names">
             <Toggle

@@ -49,6 +49,10 @@ interface Track {
   hasPos: boolean;
   /** Smoothed appearance alpha (fade in on spawn, out when stale). */
   life: number;
+
+  smoothedHeading?: number;
+  prevGroundSpeedKt?: number;
+  surfaceState?: "landing_roll" | "departure_roll" | "taxi" | "airborne" | "unknown";
 }
 
 type ProjOpts = Parameters<typeof project>[1];
@@ -299,8 +303,13 @@ constructor(
       if (rangeMi > cfg.radiusMiles * 1.08) continue;
 
       const p = project(m, proj);
-      const heading = this.screenHeading(tr, tt, proj);
-      const edgeFade = clamp01((cfg.radiusMiles - rangeMi) / (cfg.radiusMiles * 0.14));
+
+const rawHeading = this.screenHeading(tr, tt, proj);
+const heading = this.smoothScreenHeading(tr, rawHeading);
+
+tr.surfaceState = this.classifySurfaceRoll(tr.ac, tr);
+
+const edgeFade = clamp01((cfg.radiusMiles - rangeMi) / (cfg.radiusMiles * 0.14));
       const alpha = clamp01(edgeFade) * tr.life * cfg.brightness;
       const alt = tr.ac.altBaro ?? tr.ac.altGeom ?? 0;
       //const color = cfg.altitudeColor ? altRamp(alt) : hexToRgb(cfg.palette.glyph);
@@ -319,6 +328,13 @@ else if (op === "arrival") {
 else if (op === "departure") {
   color = [80, 210, 255];
 }
+
+if (tr.surfaceState === "landing_roll") {
+  color = [120, 255, 160];
+}
+else if (tr.surfaceState === "departure_roll") {
+  color = [90, 210, 255];
+}
       const emergency = cfg.highlightEmergency && !!tr.ac.squawk && EMERGENCY_SQUAWKS.has(tr.ac.squawk);
 
       visible.push({ tr, m, p, heading, rangeMi, alpha, color, emergency });
@@ -330,12 +346,19 @@ else if (op === "departure") {
     // Trails + glyphs for everyone.
     if (cfg.showDestArc) for (const v of visible) this.drawDestArc(cfg, proj, v);
     for (const v of visible) this.drawTrail(cfg, proj, v, tt);
-    for (const v of visible) this.drawGlyph(cfg, v);
+    for (const v of visible) {
+  this.drawGlyph(cfg, v);
+}
 
-    // Labels: nearest are at the END after the sort.
-    const byNear = [...visible].reverse(); // nearest first
-    this.drawLabels(cfg, byNear);
+// Labels: nearest are at the END after the sort.
+const byNear = [...visible].reverse(); // nearest first
+this.drawLabels(cfg, byNear);
 
+// Draw roll tags last so labels do not hide them.
+for (const v of visible) {
+  this.drawSurfaceStateTag(cfg, v);
+}
+    this.drawLandingQueue(cfg);
     if (cfg.theme === "focus" && byNear.length) this.drawDetailPanel(cfg, byNear[0]);
   }
 
@@ -445,6 +468,77 @@ private classifyOperation(
 
   if (vr < -300) return "arrival";
   if (vr > 300) return "departure";
+
+  return "unknown";
+}
+
+private smoothAngleRad(
+  current: number,
+  target: number,
+  factor: number,
+): number {
+  const diff =
+    Math.atan2(
+      Math.sin(target - current),
+      Math.cos(target - current),
+    );
+
+  return current + diff * factor;
+}
+
+private smoothScreenHeading(
+  tr: Track,
+  rawHeading: number,
+): number {
+  if (tr.smoothedHeading == null) {
+    tr.smoothedHeading = rawHeading;
+    return rawHeading;
+  }
+
+  tr.smoothedHeading = this.smoothAngleRad(
+    tr.smoothedHeading,
+    rawHeading,
+    0.12,
+  );
+
+  return tr.smoothedHeading;
+}
+
+private classifySurfaceRoll(
+  ac: Aircraft,
+  tr: Track,
+): Track["surfaceState"] {
+  const gs = ac.gs ?? 0;
+  const prevGs = tr.prevGroundSpeedKt ?? gs;
+  const vr = ac.baroRate ?? 0;
+
+  tr.prevGroundSpeedKt = gs;
+
+  if (!ac.onGround) {
+    return "airborne";
+  }
+
+  const accelerating = gs > prevGs + 1;
+  const decelerating = gs < prevGs - 1;
+
+  // Aircraft moving fast on ground and still accelerating = takeoff roll.
+  if (gs >= 18 && accelerating) {
+    return "departure_roll";
+  }
+
+  // Aircraft moving fast on ground and slowing down = landing roll.
+  if (gs >= 18 && decelerating) {
+    return "landing_roll";
+  }
+
+  // Fallback: fast ground movement is probably runway roll, not taxi.
+  if (gs >= 45) {
+    return vr < 0 ? "landing_roll" : "departure_roll";
+  }
+
+  if (gs <= 17) {
+    return "taxi";
+  }
 
   return "unknown";
 }
@@ -1015,62 +1109,65 @@ private drawRunwayEdgeLights(
     this.toScreen([lat, lon], cfg, proj)
   );
 
+  const start = points[0];
+  const end = points[points.length - 1];
+
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const len = Math.hypot(dx, dy);
+
+  if (len < 1) return;
+
+  const ux = dx / len;
+  const uy = dy / len;
+
+  const nx = -uy;
+  const ny = ux;
+
+  const spacingPx = 24;
+  const offsetPx = 6;
+  const radiusPx = 1.35;
+
   ctx.save();
 
-  const pulse =
-    0.45 +
-    0.35 *
-      Math.sin(this.frameT * 3);
+  for (let d = spacingPx; d < len - spacingPx; d += spacingPx) {
+    const x = start.x + ux * d;
+    const y = start.y + uy * d;
 
-  ctx.fillStyle = rgba(
-    [210, 235, 255],
-    pulse * cfg.brightness
-  );
-
-  const spacingPx = 26;
-  const offsetPx = 5;
-  const radiusPx = 1.4;
-
-  for (let i = 0; i < points.length - 1; i++) {
-    const a = points[i];
-    const b = points[i + 1];
-
-    const dx = b.x - a.x;
-    const dy = b.y - a.y;
-    const len = Math.hypot(dx, dy);
-
-    if (len < 1) continue;
-
-    const ux = dx / len;
-    const uy = dy / len;
-
-    const nx = -uy;
-    const ny = ux;
-
-    for (let d = 0; d <= len; d += spacingPx) {
-      const x = a.x + ux * d;
-      const y = a.y + uy * d;
-
-      ctx.beginPath();
-      ctx.arc(
-        x + nx * offsetPx,
-        y + ny * offsetPx,
-        radiusPx,
-        0,
-        Math.PI * 2
+    const localPulse =
+      this.dynamicLightAlpha(
+        cfg,
+        d * 0.025,
       );
-      ctx.fill();
 
-      ctx.beginPath();
-      ctx.arc(
-        x - nx * offsetPx,
-        y - ny * offsetPx,
-        radiusPx,
-        0,
-        Math.PI * 2
-      );
-      ctx.fill();
-    }
+    const color = rgba(
+      [210, 235, 255],
+      localPulse * cfg.brightness,
+    );
+
+    ctx.fillStyle = color;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 3;
+
+    ctx.beginPath();
+    ctx.arc(
+      x + nx * offsetPx,
+      y + ny * offsetPx,
+      radiusPx,
+      0,
+      Math.PI * 2,
+    );
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.arc(
+      x - nx * offsetPx,
+      y - ny * offsetPx,
+      radiusPx,
+      0,
+      Math.PI * 2,
+    );
+    ctx.fill();
   }
 
   ctx.restore();
@@ -1236,6 +1333,23 @@ if (
   }
 }
 
+private dynamicLightAlpha(
+  cfg: Config,
+  phase = 0,
+): number {
+  if (!cfg.showDynamicLighting) {
+    return 1;
+  }
+
+  return (
+    0.65 +
+    0.25 *
+      Math.sin(
+        this.frameT * 2.2 + phase,
+      )
+  );
+}
+
 private airportLightScale(cfg: Config): number {
   if (cfg.radiusMiles > 11) return 0;
 
@@ -1315,9 +1429,21 @@ const radius = 2.2 * scale;
 
     const isWhite = i < whiteCount;
 
-    const color = isWhite
-      ? rgba([255, 255, 255], 0.95 * cfg.brightness)
-      : rgba([255, 60, 60], 0.95 * cfg.brightness);
+    const pulse =
+  this.dynamicLightAlpha(
+    cfg,
+    i * 0.6,
+  );
+
+const color = isWhite
+  ? rgba(
+      [255, 255, 255],
+      pulse * cfg.brightness,
+    )
+  : rgba(
+      [255, 60, 60],
+      pulse * cfg.brightness,
+    );
 
     ctx.fillStyle = color;
     ctx.shadowColor = color;
@@ -1432,8 +1558,7 @@ private drawApproachLights(
   const ny = ux;
 
   const pulse =
-    0.65 +
-    0.25 * Math.sin(this.frameT * 4);
+  this.dynamicLightAlpha(cfg);
 
   const color = rgba(
     [245, 250, 255],
@@ -1607,6 +1732,8 @@ const radius = 1.8 * scale;
     ctx.restore();
   }
 
+  
+
   private drawMoon(p: Point, illum: number, waning: boolean, b: number): void {
     const ctx = this.ctx;
     const r = 8;
@@ -1727,6 +1854,127 @@ const radius = 1.8 * scale;
     ctx.restore();
   }
 
+private getLandingQueue(cfg: Config): Aircraft[] {
+  const arrivals: Aircraft[] = [];
+
+  for (const tr of this.tracks.values()) {
+    const ac = tr.ac;
+
+    if (ac.onGround) continue;
+    if (ac.lat == null || ac.lon == null) continue;
+
+    const op = this.classifyOperation(ac, cfg);
+    if (op !== "arrival") continue;
+
+    const dist = greatCircleMiles(
+      cfg.centerLat,
+      cfg.centerLon,
+      ac.lat,
+      ac.lon,
+    );
+
+    if (dist > 45) continue;
+
+    arrivals.push(ac);
+  }
+
+  return arrivals
+    .sort((a, b) => {
+      const da = greatCircleMiles(cfg.centerLat, cfg.centerLon, a.lat!, a.lon!);
+      const db = greatCircleMiles(cfg.centerLat, cfg.centerLon, b.lat!, b.lon!);
+      return da - db;
+    })
+    .slice(0, 5);
+}
+
+private drawLandingQueue(cfg: Config): void {
+  if (!cfg.showLandingQueue) return;
+
+  const queue = this.getLandingQueue(cfg);
+  if (!queue.length) return;
+
+  const ctx = this.ctx;
+
+  ctx.save();
+
+  let y = cfg.showHud ? 78 : 52;
+
+  ctx.font = `600 11px ${cfg.fonts.label}`;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  ctx.fillStyle = rgba([120, 255, 160], 0.95 * cfg.brightness);
+  ctx.fillText("LANDING QUEUE", 16, y);
+
+  y += 16;
+
+  ctx.font = `500 11px ${cfg.fonts.label}`;
+
+  for (let i = 0; i < queue.length; i++) {
+    const ac = queue[i];
+
+    const dist = greatCircleMiles(
+      cfg.centerLat,
+      cfg.centerLon,
+      ac.lat!,
+      ac.lon!,
+    );
+
+    const label = ac.flight?.trim() || ac.hex.toUpperCase();
+
+    ctx.fillStyle = rgba([245, 247, 255], 0.86 * cfg.brightness);
+
+    ctx.fillText(
+      `${i + 1}. ${label}  ${dist.toFixed(1)} NM`,
+      16,
+      y,
+    );
+
+    y += 14;
+  }
+
+  ctx.restore();
+}
+
+private drawSurfaceStateTag(
+  cfg: Config,
+  v: Visible,
+): void {
+  const state = v.tr.surfaceState;
+
+  if (
+    state !== "landing_roll" &&
+    state !== "departure_roll"
+  ) {
+    return;
+  }
+
+  const text =
+    state === "landing_roll"
+      ? "LANDING ROLL"
+      : "TAKEOFF ROLL";
+
+  const ctx = this.ctx;
+
+  ctx.save();
+  ctx.font = `600 10px ${cfg.fonts.label}`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  ctx.fillStyle =
+  state === "landing_roll"
+    ? rgba([120, 255, 160], 1)
+    : rgba([90, 210, 255], 1);
+  ctx.shadowColor = "rgba(0,0,0,0.9)";
+  ctx.shadowBlur = 5;
+
+  ctx.fillText(
+    text,
+    v.p.x,
+    v.p.y + cfg.glyphSizePx + 18,
+  );
+
+  ctx.restore();
+}
+
   // --- glyph: type-aware luminous silhouette ---
   private drawGlyph(cfg: Config, v: Visible): void {
     const ctx = this.ctx;
@@ -1821,9 +2069,9 @@ const s =
 
 
   private isNightAtAirport(cfg: Config): boolean {
-  const hour = new Date().getHours();
-  return hour >= 19 || hour < 6;
-  //return true
+  //const hour = new Date().getHours();
+  //return hour >= 19 || hour < 6;
+  return true
 }
 
   private labelLines(cfg: Config, ac: Aircraft): { text: string; kind: "title" | "sub" }[] {

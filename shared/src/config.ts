@@ -41,6 +41,9 @@ export interface Config {
   centerLon: number;
   radiusMiles: number;
   locationName: string;
+  showLandingQueue: boolean;
+showAircraftSilhouettes: boolean;
+showDynamicLighting: boolean;
 
   // --- calibration (tune against a real overhead pass) ---
   /** Rotate the whole field, degrees. */
@@ -134,6 +137,10 @@ export const DEFAULT_CONFIG: Config = {
   hideOnGround: true,
   showAirportLighting: true,
   showGroundVehicles: false,
+  showLandingQueue: true,
+showAircraftSilhouettes: true,
+showDynamicLighting: true,
+
   interpolate: true,
   maxExtrapolationSec: 5,
   staleSec: 20,
