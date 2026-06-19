@@ -55,7 +55,7 @@ showDynamicLighting: boolean;
   /** Rotate only the text labels (so they read right-side-up from where you
    *  lie), independent of the field rotation. Degrees. */
   labelRotationDeg: number;
-
+showPrimaryAirportOnly: boolean;
   // --- filtering ---
   minAltitudeFt: number;
   maxAltitudeFt: number;
@@ -140,7 +140,7 @@ export const DEFAULT_CONFIG: Config = {
   showLandingQueue: true,
 showAircraftSilhouettes: true,
 showDynamicLighting: true,
-
+showPrimaryAirportOnly: true,
   interpolate: true,
   maxExtrapolationSec: 5,
   staleSec: 20,

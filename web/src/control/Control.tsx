@@ -317,6 +317,13 @@ const [locationQuery, setLocationQuery] = useState("");
   />
 </Row>
 
+<Row label="Primary airport only">
+  <Toggle
+    value={cfg.showPrimaryAirportOnly}
+    onChange={(v) => set({ showPrimaryAirportOnly: v })}
+  />
+</Row>
+
           <Row label="Airline names">
             <Toggle
               value={cfg.showAirlineNames}

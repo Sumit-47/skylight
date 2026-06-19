@@ -623,8 +623,12 @@ private drawGroundVehicles(
   cfg: Config,
   proj: ProjOpts,
 ): void {
-  const geometries = this.getGeometries();
-  if (!geometries.length) return;
+  const allGeometries = this.getGeometries();
+const geometries = cfg.showPrimaryAirportOnly
+  ? allGeometries.slice(0, 1)
+  : allGeometries;
+
+if (!geometries.length) return;
 
   const taxiways: [number, number][][] = [];
 
@@ -760,7 +764,11 @@ ctx.arc(4, 3.2, 1.1, 0, Math.PI * 2);
 }
 
 private drawAirportGeometry(cfg: Config, proj: ProjOpts): void {
-  const geometries = this.getGeometries();
+  const allGeometries = this.getGeometries();
+const geometries = cfg.showPrimaryAirportOnly
+  ? allGeometries.slice(0, 1)
+  : allGeometries;
+
 if (!geometries.length) return;
 
   const night =
@@ -1210,7 +1218,10 @@ private drawOsmPolygon(
 private drawAirport(cfg: Config, proj: ProjOpts): void {
   const ctx = this.ctx;
   const rwyRgb: [number, number, number] = [150, 180, 220];
-  const airports = this.getAirports();
+  const allAirports = this.getAirports();
+const airports = cfg.showPrimaryAirportOnly
+  ? allAirports.slice(0, 1)
+  : allAirports;
 
   if (!airports.length) return;
 
@@ -1233,27 +1244,59 @@ private drawAirport(cfg: Config, proj: ProjOpts): void {
       ctx.save();
       ctx.lineCap = "butt";
 
-      ctx.strokeStyle = rgba(rwyRgb, 0.16 * cfg.brightness);
-      ctx.lineWidth = wpx;
-      ctx.beginPath();
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(b.x, b.y);
-      ctx.stroke();
+      const isActiveRunway =
+  r.leIdent === activeRunway ||
+  r.heIdent === activeRunway;
 
-      ctx.strokeStyle = rgba([210, 226, 255], 0.22 * cfg.brightness);
-      ctx.lineWidth = 1;
-      ctx.setLineDash([6, 6]);
-      ctx.beginPath();
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(b.x, b.y);
-      ctx.stroke();
+ctx.strokeStyle = isActiveRunway
+  ? rgba(rwyRgb, 0.16 * cfg.brightness)
+  : rgba(rwyRgb, 0.05 * cfg.brightness);
+
+ctx.lineWidth = wpx;
+
+ctx.beginPath();
+ctx.moveTo(a.x, a.y);
+ctx.lineTo(b.x, b.y);
+ctx.stroke();
+
+ctx.strokeStyle = isActiveRunway
+  ? rgba([210, 226, 255], 0.22 * cfg.brightness)
+  : rgba([210, 226, 255], 0.10 * cfg.brightness);
+
+ctx.lineWidth = 1;
+ctx.setLineDash([6, 6]);
+
+ctx.beginPath();
+ctx.moveTo(a.x, a.y);
+ctx.lineTo(b.x, b.y);
+ctx.stroke();
 
       ctx.restore();
 
       this.drawRunwayLabel(r.leIdent, r.le, cfg, proj);
       this.drawRunwayLabel(r.heIdent, r.he, cfg, proj);
 
-      const activeRunway = this.getLikelyActiveRunwayLabel();
+      
+
+if (activeRunway) {
+  if (r.leIdent === activeRunway) {
+    this.drawFinalApproachFunnel(
+      r.le,
+      r.he,
+      cfg,
+      proj,
+    );
+  }
+
+  if (r.heIdent === activeRunway) {
+    this.drawFinalApproachFunnel(
+      r.he,
+      r.le,
+      cfg,
+      proj,
+    );
+  }
+}
 
 if (
   activeRunway &&
@@ -1529,6 +1572,81 @@ private getPapiWhiteCount(
 
   return 0;
 }
+
+
+
+private drawFinalApproachFunnel(
+  threshold: [number, number],
+  oppositeEnd: [number, number],
+  cfg: Config,
+  proj: ProjOpts,
+): void {
+  if (cfg.radiusMiles > 12) return;
+
+  const ctx = this.ctx;
+
+  const a = this.toScreen(threshold, cfg, proj);
+  const b = this.toScreen(oppositeEnd, cfg, proj);
+
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.hypot(dx, dy);
+
+  if (len < 1) return;
+
+  const ux = dx / len;
+  const uy = dy / len;
+
+  // Extend outside the threshold, opposite runway direction.
+  const ox = -ux;
+  const oy = -uy;
+
+  const nx = -uy;
+  const ny = ux;
+
+  const funnelLength = Math.min(260, len * 1.15);
+  const nearWidth = 10;
+  const farWidth = 95;
+
+  const nearX = a.x + ox * 20;
+  const nearY = a.y + oy * 20;
+
+  const farX = a.x + ox * funnelLength;
+  const farY = a.y + oy * funnelLength;
+
+  ctx.save();
+
+  // Very faint filled approach cone.
+  ctx.beginPath();
+  ctx.moveTo(nearX + nx * nearWidth, nearY + ny * nearWidth);
+  ctx.lineTo(farX + nx * farWidth, farY + ny * farWidth);
+  ctx.lineTo(farX - nx * farWidth, farY - ny * farWidth);
+  ctx.lineTo(nearX - nx * nearWidth, nearY - ny * nearWidth);
+  ctx.closePath();
+
+  ctx.fillStyle = rgba([120, 255, 170], 0.035 * cfg.brightness);
+  ctx.fill();
+
+  // Faint side guide lines.
+  ctx.strokeStyle = rgba([120, 255, 170], 0.10 * cfg.brightness);
+  ctx.lineWidth = 1;
+  ctx.setLineDash([5, 10]);
+
+  ctx.beginPath();
+  ctx.moveTo(nearX + nx * nearWidth, nearY + ny * nearWidth);
+  ctx.lineTo(farX + nx * farWidth, farY + ny * farWidth);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(nearX - nx * nearWidth, nearY - ny * nearWidth);
+  ctx.lineTo(farX - nx * farWidth, farY - ny * farWidth);
+  ctx.stroke();
+
+  ctx.setLineDash([]);
+
+  ctx.restore();
+}
+
 
 private drawApproachLights(
   threshold: [number, number],
